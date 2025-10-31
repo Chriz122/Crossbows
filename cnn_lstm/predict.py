@@ -12,41 +12,79 @@ data_path = Path(r"logs/log_03.csv")
 output_csv_path = Path(r"RUN/predict/final_prediction_results.csv")
 output_plot_path = Path(r"RUN/predict/predictions_plot.png")
 
-# 1. 定義模型結構(需與訓練時一致 - BiLSTM + Dropout)
+# 1. 定義模型結構(需與訓練時一致 - BiLSTM + Attention + Residual)
 class CNN_LSTM(nn.Module):
-    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.3):
+    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.2):
         super(CNN_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
+        # 1D CNN 提取局部特徵
+        self.conv1d = nn.Sequential(
+            nn.Conv1d(in_channels=input_size, out_channels=256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
         # 使用 BiLSTM 提升時序記憶能力
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
+        self.lstm = nn.LSTM(256, hidden_size, num_layers, 
                            batch_first=True, bidirectional=True, dropout=dropout if num_layers > 1 else 0)
         
         # BiLSTM 輸出維度是 hidden_size * 2
         lstm_output_size = hidden_size * 2
         
-        # 多層全連接層 with Dropout
+        # Attention 機制 - 關注重要時間步
+        self.attention = nn.Sequential(
+            nn.Linear(lstm_output_size, lstm_output_size // 2),
+            nn.Tanh(),
+            nn.Linear(lstm_output_size // 2, 1)
+        )
+        
+        # 多層全連接層 with Residual Connection
         if fc_neurons is None:
             fc_neurons = [lstm_output_size // 2, output_size]
         
-        fc_modules = []
+        self.fc_layers = nn.ModuleList()
         for i in range(len(fc_neurons)):
             in_features = lstm_output_size if i == 0 else fc_neurons[i - 1]
             out_features = fc_neurons[i]
-            fc_modules.append(nn.Linear(in_features, out_features))
             
-            # 在中間層添加 ReLU 和 Dropout
-            if i < len(fc_neurons) - 1:
-                fc_modules.append(nn.ReLU())
-                fc_modules.append(nn.Dropout(dropout))
-        
-        self.fc = nn.Sequential(*fc_modules)
+            layer = nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.ReLU() if i < len(fc_neurons) - 1 else nn.Identity(),
+                nn.Dropout(dropout) if i < len(fc_neurons) - 1 else nn.Identity()
+            )
+            self.fc_layers.append(layer)
 
     def forward(self, x):
-        # BiLSTM 不需要手動初始化 h0, c0
-        out, _ = self.lstm(x)  # BiLSTM 前向傳播
-        out = self.fc(out[:, -1, :])  # 取最後一個時間步的輸出
+        # x: (batch, time_step, features)
+        
+        # 1D CNN: 需要 (batch, features, time_step)
+        x_conv = x.permute(0, 2, 1)  # (batch, features, time_step)
+        x_conv = self.conv1d(x_conv)  # (batch, 256, time_step)
+        x_conv = x_conv.permute(0, 2, 1)  # (batch, time_step, 256)
+        
+        # BiLSTM
+        lstm_out, _ = self.lstm(x_conv)  # (batch, time_step, lstm_output_size)
+        
+        # Attention 機制
+        attention_weights = self.attention(lstm_out)  # (batch, time_step, 1)
+        attention_weights = torch.softmax(attention_weights, dim=1)
+        
+        # 加權求和
+        context = torch.sum(lstm_out * attention_weights, dim=1)  # (batch, lstm_output_size)
+        
+        # 多層全連接 with Residual
+        out = context
+        for i, layer in enumerate(self.fc_layers):
+            identity = out
+            out = layer(out)
+            
+            # Residual connection (維度匹配時才加)
+            if i > 0 and i < len(self.fc_layers) - 1 and identity.size(-1) == out.size(-1):
+                out = out + identity
+        
         return out
 
 # 2. 直接指定模型檔案路徑
@@ -55,11 +93,11 @@ print(f"載入模型: {model_path}")
 # 3. 載入模型
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 384  # 與訓練時一致
+hidden_size = 512  # 與訓練時一致
 num_layers = 3  # 與訓練時一致
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.2  # 與訓練時一致
-fc_neurons = [512, 256, 128, 64, output_size]  # 與訓練時一致
+dropout = 0.15  # 與訓練時一致
+fc_neurons = [768, 512, 256, 128, output_size]  # 與訓練時一致
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 

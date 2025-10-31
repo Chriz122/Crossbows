@@ -126,41 +126,79 @@ print(f"train_X.shape:{train_X.shape}, test_X.shape:{test_X.shape}")
 
 X_train, y_train = train_X, train_y
 
-# 5. 定義CNN+LSTM模型類 (改進版: BiLSTM + Dropout)
+# 5. 定義CNN+LSTM模型類 (改進版: BiLSTM + Attention + Residual)
 class CNN_LSTM(nn.Module):
-    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.3):
+    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.2):
         super(CNN_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
+        # 1D CNN 提取局部特徵
+        self.conv1d = nn.Sequential(
+            nn.Conv1d(in_channels=input_size, out_channels=256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(dropout)
+        )
+        
         # 使用 BiLSTM 提升時序記憶能力
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
+        self.lstm = nn.LSTM(256, hidden_size, num_layers, 
                            batch_first=True, bidirectional=True, dropout=dropout if num_layers > 1 else 0)
         
         # BiLSTM 輸出維度是 hidden_size * 2
         lstm_output_size = hidden_size * 2
         
-        # 多層全連接層 with Dropout
+        # Attention 機制 - 關注重要時間步
+        self.attention = nn.Sequential(
+            nn.Linear(lstm_output_size, lstm_output_size // 2),
+            nn.Tanh(),
+            nn.Linear(lstm_output_size // 2, 1)
+        )
+        
+        # 多層全連接層 with Residual Connection
         if fc_neurons is None:
             fc_neurons = [lstm_output_size // 2, output_size]
         
-        fc_modules = []
+        self.fc_layers = nn.ModuleList()
         for i in range(len(fc_neurons)):
             in_features = lstm_output_size if i == 0 else fc_neurons[i - 1]
             out_features = fc_neurons[i]
-            fc_modules.append(nn.Linear(in_features, out_features))
             
-            # 在中間層添加 ReLU 和 Dropout
-            if i < len(fc_neurons) - 1:
-                fc_modules.append(nn.ReLU())
-                fc_modules.append(nn.Dropout(dropout))
-        
-        self.fc = nn.Sequential(*fc_modules)
+            layer = nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.ReLU() if i < len(fc_neurons) - 1 else nn.Identity(),
+                nn.Dropout(dropout) if i < len(fc_neurons) - 1 else nn.Identity()
+            )
+            self.fc_layers.append(layer)
 
     def forward(self, x):
-        # BiLSTM 不需要手動初始化 h0, c0
-        out, _ = self.lstm(x)  # BiLSTM 前向傳播
-        out = self.fc(out[:, -1, :])  # 取最後一個時間步的輸出
+        # x: (batch, time_step, features)
+        
+        # 1D CNN: 需要 (batch, features, time_step)
+        x_conv = x.permute(0, 2, 1)  # (batch, features, time_step)
+        x_conv = self.conv1d(x_conv)  # (batch, 256, time_step)
+        x_conv = x_conv.permute(0, 2, 1)  # (batch, time_step, 256)
+        
+        # BiLSTM
+        lstm_out, _ = self.lstm(x_conv)  # (batch, time_step, lstm_output_size)
+        
+        # Attention 機制
+        attention_weights = self.attention(lstm_out)  # (batch, time_step, 1)
+        attention_weights = torch.softmax(attention_weights, dim=1)
+        
+        # 加權求和
+        context = torch.sum(lstm_out * attention_weights, dim=1)  # (batch, lstm_output_size)
+        
+        # 多層全連接 with Residual
+        out = context
+        for i, layer in enumerate(self.fc_layers):
+            identity = out
+            out = layer(out)
+            
+            # Residual connection (維度匹配時才加)
+            if i > 0 and i < len(self.fc_layers) - 1 and identity.size(-1) == out.size(-1):
+                out = out + identity
+        
         return out
 
 # 6. 準備數據和模型參數
@@ -170,29 +208,29 @@ test_y1 = torch.Tensor(test_y).to(device)
 # 定義輸入、隱藏狀態和輸出維度
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 384  # 增加隱藏狀態維度以提升表達能力
+hidden_size = 512  # 進一步增加容量
 num_layers = 3  # 增加層數
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.2  # 降低 Dropout 以保留更多信息
+dropout = 0.15  # 進一步降低 Dropout
 
-# 設定全連接層的神經元數量（更深的網絡）
-fc_neurons = [512, 256, 128, 64, output_size]  # 5層全連接
+# 設定全連接層的神經元數量（更深更寬）
+fc_neurons = [768, 512, 256, 128, output_size]  # 5層，從768開始
 
 # 創建 CNN_LSTM 模型 (現在是 BiLSTM + Dropout)
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
                 fc_neurons=fc_neurons, dropout=dropout).to(device)
 
 # 訓練參數
-epochs = 2000  # 增加訓練輪數
-batch_size = 256  # 增加批量大小以加速訓練
-optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999))  # 提高學習率
+epochs = 3000  # 進一步增加訓練輪數
+batch_size = 256  # 保持較大批量
+optimizer = optim.AdamW(model.parameters(), lr=0.002, weight_decay=0.01)  # 使用 AdamW + 權重衰減
 
-# 添加學習率調度器
-scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=20, verbose=True)
+# 添加學習率調度器 - 餘弦退火
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=1e-6)
 
-# 改進損失函數: Smooth L1 Loss + 動態誤差懲罰
-criterion = nn.SmoothL1Loss()  # 更穩健的損失函數
-lambda_velocity = 0.3  # 降低動態誤差權重，讓模型更關注位置準確性
+# 改進損失函數: Huber Loss (更穩健) + 動態誤差懲罰
+criterion = nn.HuberLoss(delta=1.0)  # Huber Loss 對大誤差更寬容
+lambda_velocity = 0.2  # 進一步降低，更關注位置準確性
 
 def combined_loss(pred, target, prev_pred=None, prev_target=None):
     """
@@ -220,7 +258,7 @@ test_losses = []
 
 # Early Stopping 參數
 best_test_loss = float('inf')
-patience = 100  # 增加耐心值到100
+patience = 150  # 增加耐心值到150，給模型更多時間學習
 patience_counter = 0
 best_model_state = None
 
@@ -295,10 +333,10 @@ for epoch in range(epochs):
         train_losses.append(train_loss.item())
         test_losses.append(test_loss.item())
         
-        # 學習率調度
-        scheduler.step(test_loss)
+        # 學習率調度 (每個 epoch 都更新)
+        current_lr = optimizer.param_groups[0]['lr']
         
-        print(f"epoch:{epoch}, train_loss:{train_loss.item():.6f}, test_loss:{test_loss.item():.6f}, lr:{optimizer.param_groups[0]['lr']:.6f}")
+        print(f"epoch:{epoch}, train_loss:{train_loss.item():.6f}, test_loss:{test_loss.item():.6f}, lr:{current_lr:.6f}")
         print(f"epoch:{epoch}, train_ap:{train_ap}, test_ap:{test_ap}")
         
         # Early Stopping 檢查
@@ -314,6 +352,9 @@ for epoch in range(epochs):
             print(f"\n早停機制觸發! 已經 {patience} 個檢查點沒有改善")
             print(f"最佳 test_loss: {best_test_loss:.6f}")
             break
+    
+    # 每個 epoch 都更新學習率 (CosineAnnealing)
+    scheduler.step()
 
 # 載入最佳模型
 if best_model_state is not None:
