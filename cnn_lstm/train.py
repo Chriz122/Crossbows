@@ -253,7 +253,7 @@ model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size,
 # 訓練參數
 epochs = 3000
 batch_size = 256
-optimizer = optim.AdamW(model.parameters(), lr=0.003, weight_decay=0.005)  # 更高學習率，更低權重衰減
+optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.005)  # 更高學習率，更低權重衰減
 
 # 添加學習率調度器 - 餘弦退火
 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=30, T_mult=2, eta_min=1e-5)
