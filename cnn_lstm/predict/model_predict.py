@@ -1,16 +1,16 @@
 import torch
-import torch.nn as nn  # neural network,神经网络
-import torch.optim as optim  # 一个实现了各种优化算法的库
-import os
+import torch.nn as nn
+# import torch.optim as optim
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 # 路徑設定
-model_path = r'C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\cnn_lstm_model.pth'
-data_path = r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\logs\20250830\log_03.csv"
-output_csv_path = r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\LSTM\predict\output\final_prediction_results.csv"
-output_plot_path = r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\LSTM\predict\predictions_plot.png"
+model_path = Path(r'cnn_lstm_model.pth')
+data_path = Path(r"logs/log_03.csv")
+output_csv_path = Path(r"output/final_prediction_results.csv")
+output_plot_path = Path(r"output/predictions_plot.png")
 
 # 1. 定義模型結構（需與訓練時一致）
 class CNN_LSTM(nn.Module):

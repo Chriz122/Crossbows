@@ -1,42 +1,36 @@
-# 需要安裝的 pip 套件:
-# pip install pandas numpy matplotlib torch scikit-learn
+import pandas as pd
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+import torch.nn as nn
+import torch.optim as optim
+import warnings
+from pathlib import Path
+warnings.filterwarnings('ignore')
 
-import os
-import pandas as pd  # 导入csv文件的库
-import numpy as np  # 进行矩阵运算的库
-import torch  # 一个深度学习的库Pytorch
-import matplotlib.pyplot as plt  # 导入强大的绘图库
-# 檢查 numpy 版本相容性
-if np.__version__.startswith('2.'):
-    print("Warning: Numpy 2.x may not be fully compatible with PyTorch 2.0.1. Consider downgrading to numpy==1.26.4")
-import torch.nn as nn  # neural network,神经网络
-import torch.optim as optim  # 一个实现了各种优化算法的库
-import warnings  # 避免一些可以忽略的报錯
-warnings.filterwarnings('ignore')  # filterwarnings()方法是用于设置警告过滤器的方法
-
-# 设置随机种子
 import random
-torch.backends.cudnn.deterministic = True  # 将cudnn框架中的随机数生成器设为确定性模式
-torch.backends.cudnn.benchmark = False  # 关闭CuDNN框架的自动寻找最优卷积算法的功能
+torch.backends.cudnn.deterministic = True  # 將CuDNN框架設置為確定性模式
+torch.backends.cudnn.benchmark = False  # 關閉CuDNN框架的自動尋找最優卷積算法的功能
 torch.manual_seed(42)
 np.random.seed(42)
 random.seed(42)
 
-# 检查是否有可用的 GPU
+# 檢查是否有可用的 GPU
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # 清空 GPU 記憶體
 if torch.cuda.is_available():
+    print("CUDA is available. Clearing GPU memory...")
     torch.cuda.empty_cache()
 
 # 1. 數據載入與預處理
 # 載入數據，只保留前67個欄位
-final_csv_path = r'C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\LSTM\train\output\final_prediction_results.csv'
+final_csv_path = Path('train/output/final_prediction_results.csv')
 
-temp_df = pd.read_csv(r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\logs\20250830\log_02.csv", nrows=1)
+temp_df = pd.read_csv(r"logs/log_02.csv", nrows=1)
 expected_columns = temp_df.columns[:67].tolist()
-train_df = pd.read_csv(r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\logs\20250830\log_02.csv", usecols=range(67))
+train_df = pd.read_csv(r"logs/log_02.csv", usecols=range(67))
 train_df.columns = expected_columns  # 確保欄位名稱正確
 print(f"len(train_df):{len(train_df)}")
 train_df.head()  # 顯示前5行

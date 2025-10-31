@@ -8,19 +8,20 @@ import csv
 import time
 from datetime import datetime
 import os
-import pprint
+# import pprint
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import QApplication, QWidget, QLabel, QLineEdit, QTextBrowser, QVBoxLayout, QPushButton, QSizePolicy
 from PySide6.QtGui import QMatrix4x4, QImage, QPixmap
 from PySide6.QtCore import QTimer
 import pyqtgraph.opengl as gl
-import torch  # 新增匯入 torch
+import torch
+from pathlib import Path
 
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 widget_size = 400, 300
-log_file_path=r"C:\Users\pc\Desktop\實驗室電腦\Desktop\手部控制平台\logs"
-ui_file_path = r'視窗程式\ui\MonitorForm.ui'
+log_file_path = Path(r"logs")
+ui_file_path = Path(r'gui/ui/MonitorForm.ui')
 Gyro_COMport='COM3'  # 替換為實際的 COM 埠
 Gyro_baudrate=115200
 
