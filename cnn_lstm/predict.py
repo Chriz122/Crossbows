@@ -12,48 +12,58 @@ data_path = Path(r"logs/log_03.csv")
 output_csv_path = Path(r"RUN/predict/final_prediction_results.csv")
 output_plot_path = Path(r"RUN/predict/predictions_plot.png")
 
-# 1. 定義模型結構（需與訓練時一致）
+# 1. 定義模型結構(需與訓練時一致 - BiLSTM + Dropout)
 class CNN_LSTM(nn.Module):
-    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None):
+    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.3):
         super(CNN_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        #self.conv = nn.Conv1d(conv_input, conv_input, kernel_size=3, padding=1)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-
-        # 多層全連接層
+        
+        # 使用 BiLSTM 提升時序記憶能力
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
+                           batch_first=True, bidirectional=True, dropout=dropout if num_layers > 1 else 0)
+        
+        # BiLSTM 輸出維度是 hidden_size * 2
+        lstm_output_size = hidden_size * 2
+        
+        # 多層全連接層 with Dropout
         if fc_neurons is None:
-            fc_neurons = [hidden_size // 2, output_size]  # 預設神經元數量
+            fc_neurons = [lstm_output_size // 2, output_size]
+        
         fc_modules = []
         for i in range(len(fc_neurons)):
-            in_features = hidden_size if i == 0 else fc_neurons[i - 1]
+            in_features = lstm_output_size if i == 0 else fc_neurons[i - 1]
             out_features = fc_neurons[i]
             fc_modules.append(nn.Linear(in_features, out_features))
-            # if i < len(fc_neurons) - 1:  # 最後一層不加激活函數
-            #     fc_modules.append(nn.ReLU())
+            
+            # 在中間層添加 ReLU 和 Dropout
+            if i < len(fc_neurons) - 1:
+                fc_modules.append(nn.ReLU())
+                fc_modules.append(nn.Dropout(dropout))
+        
         self.fc = nn.Sequential(*fc_modules)
 
     def forward(self, x):
-        #x = self.conv(x)
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)  # 初始化隐藏状态h0
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)  # 初始化记忆状态c0
-        out, _ = self.lstm(x, (h0, c0))  # LSTM前向传播
-        out = self.fc(out[:, -1, :])  # 取最后一个时间步的输出作为预测结果
+        # BiLSTM 不需要手動初始化 h0, c0
+        out, _ = self.lstm(x)  # BiLSTM 前向傳播
+        out = self.fc(out[:, -1, :])  # 取最後一個時間步的輸出
         return out
 
 # 2. 直接指定模型檔案路徑
 print(f"載入模型: {model_path}")
 
 # 3. 載入模型
-input_size = 63  # 輸入特徵維度（Z0 到 Z20，共21個特徵）
+input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 512  # 減少隱藏狀態維度以降低過擬合風險
-num_layers = 3  # 減少層數以降低計算資源需求
+hidden_size = 256  # 降低隱藏狀態維度
+num_layers = 2  # 減少層數
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-fc_neurons = [128, 128, 128, 64, output_size]  # 第一層 128 個神經元，第二層 128 個神經元，第三層 128 個神經元，第四層 64 個神經元，最後一層輸出 3 個
+dropout = 0.3  # Dropout 比率
+fc_neurons = [256, 128, 64, output_size]  # 逐層遞減
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=fc_neurons).to(device)
+model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
+                fc_neurons=fc_neurons, dropout=dropout).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 
@@ -76,19 +86,30 @@ features = feature_scaler.fit_transform(features)
 targets = df[['Yaw', 'Pitch', 'Roll']].values
 scaled_targets = target_scaler.fit_transform(targets)
 
-# 6. 切分序列（time_step=12）
+# 6. 切分序列（time_step=12）並添加動態特徵
 time_step = 12
 dataX = []
 datay = []
 for i in range(len(features) - time_step):
     dataX.append(features[i:i + time_step])
-    datay.append(scaled_targets[i + time_step])
+    datay.append(scaled_targets[i + time_step-1])
 dataX = np.array(dataX).reshape(len(dataX), time_step, -1)
 datay = np.array(datay)
 
+# 計算動態特徵: 速度和加速度
+velocity = np.diff(dataX, axis=1)
+velocity = np.concatenate([np.zeros((velocity.shape[0], 1, velocity.shape[2])), velocity], axis=1)
+
+acceleration = np.diff(velocity, axis=1)
+acceleration = np.concatenate([np.zeros((acceleration.shape[0], 1, acceleration.shape[2])), acceleration], axis=1)
+
+# 融合原始位置、速度、加速度
+dataX_enhanced = np.concatenate([dataX, velocity, acceleration], axis=2)
+print(f"增強特徵後的形狀: {dataX_enhanced.shape}")  # 應該是 (samples, 12, 189)
+
 # 7. 預測
 with torch.no_grad():
-    X_tensor = torch.Tensor(dataX).to(device)
+    X_tensor = torch.Tensor(dataX_enhanced).to(device)  # 使用增強後的特徵
     pred = model(X_tensor)
     pred = pred.cpu().numpy()
 

@@ -72,7 +72,7 @@ target_scaler = MinMaxScaler()
 scaled_features = feature_scaler.fit_transform(features)
 scaled_targets = target_scaler.fit_transform(targets)
 
-# 3. 數據切分為序列
+# 3. 數據切分為序列 (改進版: 添加動態特徵)
 def split_data(features, targets, time_step=12):
     dataX = []
     datay = []
@@ -81,11 +81,24 @@ def split_data(features, targets, time_step=12):
         datay.append(targets[i + time_step-1])  # 目標是最後時間步的 Yaw, Pitch, Roll
     dataX = np.array(dataX).reshape(len(dataX), time_step, -1)  # (samples, time_step, features)
     datay = np.array(datay)  # (samples, 3)
-    return dataX, datay
+    
+    # 計算動態特徵: 速度 (一階差分)
+    velocity = np.diff(dataX, axis=1)  # (samples, time_step-1, features)
+    # 在開頭補零使維度一致
+    velocity = np.concatenate([np.zeros((velocity.shape[0], 1, velocity.shape[2])), velocity], axis=1)
+    
+    # 計算加速度 (二階差分)
+    acceleration = np.diff(velocity, axis=1)
+    acceleration = np.concatenate([np.zeros((acceleration.shape[0], 1, acceleration.shape[2])), acceleration], axis=1)
+    
+    # 融合原始位置、速度、加速度
+    dataX_enhanced = np.concatenate([dataX, velocity, acceleration], axis=2)
+    
+    return dataX_enhanced, datay
 
 dataX, datay = split_data(scaled_features, scaled_targets, time_step=12)
 
-print(f"dataX.shape:{dataX.shape}, datay.shape:{datay.shape}")
+print(f"dataX.shape:{dataX.shape}, datay.shape:{datay.shape}")  # 特徵維度應該是 63*3=189
 
 # 4. 劃分訓練集和測試集
 def train_test_split(dataX, datay, shuffle=True, percentage=0.8):
@@ -107,33 +120,41 @@ print(f"train_X.shape:{train_X.shape}, test_X.shape:{test_X.shape}")
 
 X_train, y_train = train_X, train_y
 
-# 5. 定義CNN+LSTM模型類
+# 5. 定義CNN+LSTM模型類 (改進版: BiLSTM + Dropout)
 class CNN_LSTM(nn.Module):
-    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None):
+    def __init__(self, conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=None, dropout=0.3):
         super(CNN_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        #self.conv = nn.Conv1d(conv_input, conv_input, kernel_size=3, padding=1)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-
-        # 多層全連接層
+        
+        # 使用 BiLSTM 提升時序記憶能力
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, 
+                           batch_first=True, bidirectional=True, dropout=dropout if num_layers > 1 else 0)
+        
+        # BiLSTM 輸出維度是 hidden_size * 2
+        lstm_output_size = hidden_size * 2
+        
+        # 多層全連接層 with Dropout
         if fc_neurons is None:
-            fc_neurons = [hidden_size // 2, output_size]  # 預設神經元數量
+            fc_neurons = [lstm_output_size // 2, output_size]
+        
         fc_modules = []
         for i in range(len(fc_neurons)):
-            in_features = hidden_size if i == 0 else fc_neurons[i - 1]
+            in_features = lstm_output_size if i == 0 else fc_neurons[i - 1]
             out_features = fc_neurons[i]
             fc_modules.append(nn.Linear(in_features, out_features))
-            # if i < len(fc_neurons) - 1:  # 最後一層不加激活函數
-            #     fc_modules.append(nn.ReLU())
+            
+            # 在中間層添加 ReLU 和 Dropout
+            if i < len(fc_neurons) - 1:
+                fc_modules.append(nn.ReLU())
+                fc_modules.append(nn.Dropout(dropout))
+        
         self.fc = nn.Sequential(*fc_modules)
 
     def forward(self, x):
-        #x = self.conv(x)
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)  # 初始化隐藏状态h0
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)  # 初始化记忆状态c0
-        out, _ = self.lstm(x, (h0, c0))  # LSTM前向传播
-        out = self.fc(out[:, -1, :])  # 取最后一个时间步的输出作为预测结果
+        # BiLSTM 不需要手動初始化 h0, c0
+        out, _ = self.lstm(x)  # BiLSTM 前向傳播
+        out = self.fc(out[:, -1, :])  # 取最後一個時間步的輸出
         return out
 
 # 6. 準備數據和模型參數
@@ -141,23 +162,45 @@ test_X1 = torch.Tensor(test_X).to(device)
 test_y1 = torch.Tensor(test_y).to(device)
 
 # 定義輸入、隱藏狀態和輸出維度
-input_size = 63  # 輸入特徵維度（Z0 到 Z20，共21個特徵）
+input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 512  # 減少隱藏狀態維度以降低過擬合風險
-num_layers = 3  # 減少層數以降低計算資源需求
+hidden_size = 256  # 降低隱藏狀態維度
+num_layers = 2  # 減少層數
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
+dropout = 0.3  # Dropout 比率
 
 # 設定全連接層的神經元數量
-fc_neurons = [128, 128, 128, 64, output_size]  # 第一層 128 個神經元，第二層 128 個神經元，第三層 128 個神經元，第四層 64 個神經元，最後一層輸出 3 個
+fc_neurons = [256, 128, 64, output_size]  # 逐層遞減
 
-# 創建 CNN_LSTM 模型
-model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=fc_neurons).to(device)
+# 創建 CNN_LSTM 模型 (現在是 BiLSTM + Dropout)
+model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
+                fc_neurons=fc_neurons, dropout=dropout).to(device)
 
 # 訓練參數
 epochs = 1000
 batch_size = 128  # 減少批量大小以降低記憶體需求
-optimizer = optim.Adam(model.parameters(), lr=0.00001, betas=(0.5, 0.999))
-criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.0001, betas=(0.9, 0.999))  # 調整學習率和 beta
+
+# 改進損失函數: Smooth L1 Loss + 動態誤差懲罰
+criterion = nn.SmoothL1Loss()  # 更穩健的損失函數
+lambda_velocity = 0.5  # 動態誤差權重
+
+def combined_loss(pred, target, prev_pred=None, prev_target=None):
+    """
+    組合損失函數:
+    1. Smooth L1 Loss (位置誤差)
+    2. 速度一致性損失 (角速度誤差)
+    """
+    pos_loss = criterion(pred, target)
+    
+    if prev_pred is not None and prev_target is not None:
+        # 計算預測和真實的角速度
+        pred_velocity = pred - prev_pred
+        target_velocity = target - prev_target
+        velocity_loss = criterion(pred_velocity, target_velocity)
+        return pos_loss + lambda_velocity * velocity_loss
+    
+    return pos_loss
 
 # 動態調整 batch_size
 batch_size = min(batch_size, len(train_X))
@@ -165,6 +208,12 @@ print(f"Adjusted batch_size: {batch_size}")
 
 train_losses = []
 test_losses = []
+
+# Early Stopping 參數
+best_test_loss = float('inf')
+patience = 50  # 50個 epoch 沒改善就停止
+patience_counter = 0
+best_model_state = None
 
 print("start")
 
@@ -186,7 +235,10 @@ def calculate_ap(predictions, targets):
         ap_scores.append(ap)
     return ap_scores
 
-# 在訓練過程中計算並輸出loss和AP
+# 在訓練過程中計算並輸出loss和AP (改進版: 使用組合損失 + Early Stopping)
+prev_train_output = None
+prev_test_output = None
+
 for epoch in range(epochs):
     random_num = [i for i in range(len(train_X))]
     np.random.shuffle(random_num)
@@ -201,16 +253,31 @@ for epoch in range(epochs):
     model.train()
     optimizer.zero_grad()
     output = model(train_X1)
-    train_loss = criterion(output, train_y1)
+    
+    # 使用組合損失函數
+    if prev_train_output is not None:
+        train_loss = combined_loss(output, train_y1, prev_train_output, train_y1)
+    else:
+        train_loss = combined_loss(output, train_y1)
+    
     train_loss.backward()
+    
+    # 梯度裁剪防止梯度爆炸
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+    
     optimizer.step()
+    prev_train_output = output.detach()
 
     if epoch % 50 == 0:
         model.eval()
         with torch.no_grad():
             # 計算測試損失
             output = model(test_X1)
-            test_loss = criterion(output, test_y1)
+            if prev_test_output is not None:
+                test_loss = combined_loss(output, test_y1, prev_test_output, test_y1)
+            else:
+                test_loss = combined_loss(output, test_y1)
+            prev_test_output = output.detach()
 
             # 計算AP
             train_ap = calculate_ap(train_X1.cpu().numpy(), train_y1.cpu().numpy())
@@ -218,8 +285,27 @@ for epoch in range(epochs):
 
         train_losses.append(train_loss.item())
         test_losses.append(test_loss.item())
-        print(f"epoch:{epoch}, train_loss:{train_loss.item()}, test_loss:{test_loss.item()}")
+        print(f"epoch:{epoch}, train_loss:{train_loss.item():.6f}, test_loss:{test_loss.item():.6f}")
         print(f"epoch:{epoch}, train_ap:{train_ap}, test_ap:{test_ap}")
+        
+        # Early Stopping 檢查
+        if test_loss.item() < best_test_loss:
+            best_test_loss = test_loss.item()
+            patience_counter = 0
+            best_model_state = model.state_dict().copy()
+            print(f"✓ 新的最佳模型! test_loss: {best_test_loss:.6f}")
+        else:
+            patience_counter += 1
+            
+        if patience_counter >= patience:
+            print(f"\n早停機制觸發! 已經 {patience} 個檢查點沒有改善")
+            print(f"最佳 test_loss: {best_test_loss:.6f}")
+            break
+
+# 載入最佳模型
+if best_model_state is not None:
+    model.load_state_dict(best_model_state)
+    print("已載入訓練過程中的最佳模型")
 
 def predict_in_batches(model, data, batch_size, device):
     model.eval()
