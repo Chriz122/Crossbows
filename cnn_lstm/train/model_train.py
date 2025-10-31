@@ -26,22 +26,20 @@ if torch.cuda.is_available():
 
 # 1. 數據載入與預處理
 # 載入數據，只保留前67個欄位
-final_csv_path = Path('train/output/final_prediction_results.csv')
+final_csv_path = Path('cnn_lstm/train/output/final_prediction_results.csv')
 
-temp_df = pd.read_csv(r"logs/log_02.csv", nrows=1)
+temp_df = pd.read_csv(Path("logs/log_02.csv"), nrows=1)
 expected_columns = temp_df.columns[:67].tolist()
-train_df = pd.read_csv(r"logs/log_02.csv", usecols=range(67))
+train_df = pd.read_csv(Path("logs/log_02.csv"), usecols=range(67))
 train_df.columns = expected_columns  # 確保欄位名稱正確
 print(f"len(train_df):{len(train_df)}")
 train_df.head()  # 顯示前5行
-
 
 # 清理 Yaw, Pitch, Roll 欄位
 train_df['Yaw'] = train_df['Yaw'].str.replace('Yaw: ', '', regex=False).astype(float)
 train_df['Pitch'] = train_df['Pitch'].str.replace('Pitch: ', '', regex=False).astype(float)
 train_df['Roll'] = train_df['Roll'].str.replace('Roll: ', '', regex=False).astype(float)
 print(train_df.head())
-
 
 # 選擇特徵（X0, Y0, Z0, ..., X20, Y20, Z20）和目標變量（Yaw, Pitch, Roll）
 feature_columns = []
@@ -62,7 +60,7 @@ for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.ylabel(label)
     plt.legend()
 plt.tight_layout()
-plt.savefig('target_plots.png')
+plt.savefig(Path('cnn_lstm/train/output/target_plots.png'))
 plt.close()
 
 # 2. 數據標準化
@@ -156,9 +154,9 @@ fc_neurons = [128, 128, 128, 64, output_size]  # 第一層 128 個神經元，�
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=fc_neurons).to(device)
 
 # 訓練參數
-num_epochs = 500
+epochs = 50
 batch_size = 128  # 減少批量大小以降低記憶體需求
-optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.5, 0.999))
+optimizer = optim.Adam(model.parameters(), lr=0.01, betas=(0.5, 0.999))
 criterion = nn.MSELoss()
 
 # 動態調整 batch_size
@@ -189,7 +187,7 @@ def calculate_ap(predictions, targets):
     return ap_scores
 
 # 在訓練過程中計算並輸出loss和AP
-for epoch in range(num_epochs):
+for epoch in range(epochs):
     random_num = [i for i in range(len(train_X))]
     np.random.shuffle(random_num)
 
@@ -250,8 +248,8 @@ results_df = pd.DataFrame({
     'pred_roll': pred_y[:, 2],
     'true_roll': true_y[:, 2]
 })
-results_df.to_csv('prediction_results.csv', index=False)
-print("預測結果已儲存為 'prediction_results.csv'")
+results_df.to_csv(Path('cnn_lstm/train/output/prediction_results.csv'), index=False)
+print(f"預測結果已儲存於 {Path('cnn_lstm/train/output/prediction_results.csv')}")
 
 # 計算每個目標變量的 MSE
 def mse(pred_y, true_y):
@@ -288,7 +286,7 @@ for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.ylabel(label)
     plt.legend()
 plt.tight_layout()
-plt.savefig('cnn_lstm_prediction_results.png')
+plt.savefig(Path('cnn_lstm/train/output/cnn_lstm_prediction_results.png'))
 plt.show()
 
 # 輸出最終結果為 CSV
@@ -303,11 +301,9 @@ final_results = pd.DataFrame({
 })
 
 final_results.to_csv(final_csv_path, index=False)
-print(f"最終預測結果已儲存為 '{final_csv_path}'")
+print(f"最終預測結果已儲存於 {final_csv_path}")
 
 # 訓練過程結束後儲存模型
-model_path = 'cnn_lstm_model.pth'
+model_path = Path('cnn_lstm/train/output/cnn_lstm_model.pth')
 torch.save(model.state_dict(), model_path)
-print(f"模型已儲存為 '{model_path}'")
-torch.save(model.state_dict(), model_path)
-print(f"模型已儲存為 '{model_path}'")
+print(f"模型已儲存於 {model_path}")

@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # 路徑設定
-model_path = Path(r'cnn_lstm_model.pth')
+model_path = Path(r'cnn_lstm/train/output/cnn_lstm_model.pth')
 data_path = Path(r"logs/log_03.csv")
-output_csv_path = Path(r"output/final_prediction_results.csv")
-output_plot_path = Path(r"output/predictions_plot.png")
+output_csv_path = Path(r"cnn_lstm/predict/output/final_prediction_results.csv")
+output_plot_path = Path(r"cnn_lstm/predict/output/predictions_plot.png")
 
 # 1. 定義模型結構（需與訓練時一致）
 class CNN_LSTM(nn.Module):
