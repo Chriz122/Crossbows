@@ -93,17 +93,23 @@ print(f"載入模型: {model_path}")
 # 3. 載入模型
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 640  # 與訓練時一致
-num_layers = 4  # 與訓練時一致
+hidden_size = 512  # 與訓練時一致（降低以減少過擬合）
+num_layers = 3  # 與訓練時一致
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.1  # 與訓練時一致
-fc_neurons = [1024, 768, 512, 256, 128, output_size]  # 與訓練時一致
+dropout = 0.25  # 與訓練時一致
+fc_neurons = [768, 512, 256, 128, output_size]  # 與訓練時一致
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
                 fc_neurons=fc_neurons, dropout=dropout).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
+
+# 確保模型處於評估模式（關閉 Dropout 和 BatchNorm 的訓練行為）
 model.eval()
+print("模型已設置為評估模式 (Dropout 和 BatchNorm 已關閉)")
+
+# 禁用梯度計算以節省記憶體和加速
+torch.set_grad_enabled(False)
 
 # 4. 載入要預測的資料（這裡以測試集為例，請依需求更換）
 df = pd.read_csv(data_path, usecols=range(67))

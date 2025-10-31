@@ -106,10 +106,11 @@ dataX, datay = split_data(scaled_features, scaled_targets, time_step=12)
 
 print(f"dataX.shape:{dataX.shape}, datay.shape:{datay.shape}")  # 特徵維度應該是 63*3=189
 
-# 數據增強函數
-def augment_data(X, y, noise_level=0.02, scale_range=(0.95, 1.05)):
+# 數據增強函數 - 輕量版
+def augment_data(X, y, noise_level=0.01, scale_range=(0.98, 1.02), augment_factor=1):
     """
-    數據增強：添加輕微擾動和縮放
+    數據增強：輕微擾動（減少增強強度以提升泛化）
+    augment_factor: 1=只增加1倍(2倍總數), 2=增加2倍(3倍總數)
     """
     augmented_X = []
     augmented_y = []
@@ -119,15 +120,11 @@ def augment_data(X, y, noise_level=0.02, scale_range=(0.95, 1.05)):
         augmented_X.append(X[i])
         augmented_y.append(y[i])
         
-        # 增強1: 添加高斯噪音
-        noise = np.random.normal(0, noise_level, X[i].shape)
-        augmented_X.append(X[i] + noise)
-        augmented_y.append(y[i])
-        
-        # 增強2: 輕微縮放
-        scale = np.random.uniform(scale_range[0], scale_range[1])
-        augmented_X.append(X[i] * scale)
-        augmented_y.append(y[i])
+        if augment_factor >= 1:
+            # 增強1: 添加輕微高斯噪音
+            noise = np.random.normal(0, noise_level, X[i].shape)
+            augmented_X.append(X[i] + noise)
+            augmented_y.append(y[i])
     
     return np.array(augmented_X), np.array(augmented_y)
 
@@ -148,10 +145,10 @@ def train_test_split(dataX, datay, shuffle=True, percentage=0.8):
 #前80%作訓練，後80%作測試
 train_X, train_y, test_X, test_y = train_test_split(dataX, datay, shuffle=False, percentage=0.8)
 
-# 對訓練集進行數據增強
+# 對訓練集進行輕量數據增強 (只增加1倍，總共2倍數據)
 print(f"原始訓練集: train_X.shape:{train_X.shape}")
-train_X, train_y = augment_data(train_X, train_y, noise_level=0.015, scale_range=(0.97, 1.03))
-print(f"增強後訓練集: train_X.shape:{train_X.shape}")
+train_X, train_y = augment_data(train_X, train_y, noise_level=0.008, augment_factor=1)
+print(f"增強後訓練集: train_X.shape:{train_X.shape} (輕量增強，只2倍數據)")
 print(f"test_X.shape:{test_X.shape}")
 
 X_train, y_train = train_X, train_y
@@ -238,37 +235,37 @@ test_y1 = torch.Tensor(test_y).to(device)
 # 定義輸入、隱藏狀態和輸出維度
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 640  # 大幅增加容量
-num_layers = 4  # 增加到4層
+hidden_size = 512  # 降低容量以減少過擬合
+num_layers = 3  # 降低層數
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.1  # 降低到0.1，更激進
+dropout = 0.25  # 增加 Dropout 以減少過擬合
 
-# 設定全連接層的神經元數量（更深更寬）
-fc_neurons = [1024, 768, 512, 256, 128, output_size]  # 6層，從1024開始
+# 設定全連接層的神經元數量（減少層數和寬度）
+fc_neurons = [768, 512, 256, 128, output_size]  # 5層
 
 # 創建 CNN_LSTM 模型 (現在是 BiLSTM + Dropout)
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
                 fc_neurons=fc_neurons, dropout=dropout).to(device)
 
 # 訓練參數
-epochs = 3000
+epochs = 2000  # 減少訓練輪數，避免過擬合
 batch_size = 256
-optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.005)  # 更高學習率，更低權重衰減
+optimizer = optim.AdamW(model.parameters(), lr=0.0015, weight_decay=0.015)  # 降低學習率，增加權重衰減
 
 # 添加學習率調度器 - 餘弦退火
-scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=30, T_mult=2, eta_min=1e-5)
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=40, T_mult=2, eta_min=1e-6)
 
-# 更激進的損失函數
-criterion = nn.MSELoss()  # 改回 MSE，對大誤差更敏感
-lambda_velocity = 0.1  # 降低速度權重
-lambda_magnitude = 1.5  # 新增：鼓勵大幅度預測
+# 改進損失函數 - 平衡版本
+criterion = nn.SmoothL1Loss()  # 改回 SmoothL1，更穩健
+lambda_velocity = 0.2  # 增加速度權重
+lambda_magnitude = 0.5  # 大幅降低幅度懲罰
 
 def combined_loss(pred, target, prev_pred=None, prev_target=None):
     """
-    組合損失函數:
-    1. MSE Loss (位置誤差) - 對大誤差更敏感
+    組合損失函數 (平衡版):
+    1. SmoothL1 Loss (位置誤差) - 更穩健
     2. 速度一致性損失 (角速度誤差)
-    3. 幅度損失 (鼓勵預測大值)
+    3. 適度幅度損失
     """
     # 基礎位置誤差
     pos_loss = criterion(pred, target)
@@ -280,7 +277,7 @@ def combined_loss(pred, target, prev_pred=None, prev_target=None):
         target_velocity = target - prev_target
         vel_loss = criterion(pred_velocity, target_velocity)
     
-    # 幅度懲罰 - 如果預測幅度小於真實幅度，額外懲罰
+    # 適度幅度懲罰
     pred_range = torch.abs(pred).mean()
     target_range = torch.abs(target).mean()
     magnitude_penalty = torch.relu(target_range - pred_range) * lambda_magnitude
