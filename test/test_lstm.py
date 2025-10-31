@@ -88,7 +88,7 @@ def main():
     file_path = Path(r'logs/log_01.csv')
     seq_length = 10
     train_split = 0.8
-    epochs = 500
+    epochs = 3
     batch_size = 32
     
     # 載入和預處理數據
@@ -134,7 +134,7 @@ def main():
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig(Path('RUN/training_loss_z_only.png'))
+    plt.savefig(Path('RUN/test/training_loss_z_only.png'))
     plt.close()
     
     # 繪製預測結果
@@ -148,10 +148,10 @@ def main():
         plt.ylabel(label)
         plt.legend()
     plt.tight_layout()
-    plt.savefig(Path('RUN/prediction_results_z_only.png'))
+    plt.savefig(Path('RUN/test/prediction_results_z_only.png'))
     
     # 儲存模型
-    model.save('lstm_model_z_only.h5')
+    model.save(Path('RUN/test/lstm_model_z_only.h5'))
     
     print("模型訓練完成，已儲存為 'lstm_model_z_only.h5'")
     print("訓練損失和預測結果圖已儲存為 'training_loss_z_only.png' 和 'prediction_results_z_only.png'")
