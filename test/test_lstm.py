@@ -4,6 +4,7 @@ from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import warnings
+from pathlib import Path
 
 # 忽略 Pandas 警告
 warnings.filterwarnings('ignore')
@@ -84,7 +85,7 @@ def build_lstm_model(input_shape, output_dim):
 # 4. 主程式
 def main():
     # 參數設定
-    file_path = r'手部控制平台\logs\20250421\log_01.csv'
+    file_path = Path(r'logs/log_01.csv')
     seq_length = 10
     train_split = 0.8
     epochs = 500
@@ -133,7 +134,7 @@ def main():
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
-    plt.savefig('training_loss_z_only.png')
+    plt.savefig(Path('RUN/training_loss_z_only.png'))
     plt.close()
     
     # 繪製預測結果
@@ -147,7 +148,7 @@ def main():
         plt.ylabel(label)
         plt.legend()
     plt.tight_layout()
-    plt.savefig('prediction_results_z_only.png')
+    plt.savefig(Path('RUN/prediction_results_z_only.png'))
     
     # 儲存模型
     model.save('lstm_model_z_only.h5')

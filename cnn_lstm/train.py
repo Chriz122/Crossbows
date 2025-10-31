@@ -26,7 +26,7 @@ if torch.cuda.is_available():
 
 # 1. 數據載入與預處理
 # 載入數據，只保留前67個欄位
-final_csv_path = Path('cnn_lstm/train/output/final_prediction_results.csv')
+final_csv_path = Path('RUN/train/final_prediction_results.csv')
 
 temp_df = pd.read_csv(Path("logs/log_02.csv"), nrows=1)
 expected_columns = temp_df.columns[:67].tolist()
@@ -60,7 +60,7 @@ for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.ylabel(label)
     plt.legend()
 plt.tight_layout()
-plt.savefig(Path('cnn_lstm/train/output/target_plots.png'))
+plt.savefig(Path('RUN/train/target_plots.png'))
 plt.close()
 
 # 2. 數據標準化
@@ -248,8 +248,8 @@ results_df = pd.DataFrame({
     'pred_roll': pred_y[:, 2],
     'true_roll': true_y[:, 2]
 })
-results_df.to_csv(Path('cnn_lstm/train/output/prediction_results.csv'), index=False)
-print(f"預測結果已儲存於 {Path('cnn_lstm/train/output/prediction_results.csv')}")
+results_df.to_csv(Path('RUN/train/prediction_results.csv'), index=False)
+print(f"預測結果已儲存於 {Path('RUN/train/prediction_results.csv')}")
 
 # 計算每個目標變量的 MSE
 def mse(pred_y, true_y):
@@ -286,7 +286,7 @@ for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.ylabel(label)
     plt.legend()
 plt.tight_layout()
-plt.savefig(Path('cnn_lstm/train/output/cnn_lstm_prediction_results.png'))
+plt.savefig(Path('RUN/train/cnn_lstm_prediction_results.png'))
 plt.show()
 
 # 輸出最終結果為 CSV
@@ -304,6 +304,6 @@ final_results.to_csv(final_csv_path, index=False)
 print(f"最終預測結果已儲存於 {final_csv_path}")
 
 # 訓練過程結束後儲存模型
-model_path = Path('cnn_lstm/train/output/cnn_lstm_model.pth')
+model_path = Path('RUN/train/cnn_lstm_model.pth')
 torch.save(model.state_dict(), model_path)
 print(f"模型已儲存於 {model_path}")
