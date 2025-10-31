@@ -67,10 +67,10 @@ plt.close()
 
 # 2. 數據標準化
 from sklearn.preprocessing import MinMaxScaler
-# 创建MinMaxScaler对象
+# 創建 MinMaxScaler 對象
 feature_scaler = MinMaxScaler()
 target_scaler = MinMaxScaler()
-# 将数据进行归一化
+# 將數據標準化到 [0, 1] 範圍內
 scaled_features = feature_scaler.fit_transform(features)
 scaled_targets = target_scaler.fit_transform(targets)
 
