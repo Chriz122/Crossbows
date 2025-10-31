@@ -154,9 +154,9 @@ fc_neurons = [128, 128, 128, 64, output_size]  # 第一層 128 個神經元，�
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, fc_neurons=fc_neurons).to(device)
 
 # 訓練參數
-epochs = 50
+epochs = 1000
 batch_size = 128  # 減少批量大小以降低記憶體需求
-optimizer = optim.Adam(model.parameters(), lr=0.01, betas=(0.5, 0.999))
+optimizer = optim.Adam(model.parameters(), lr=0.00001, betas=(0.5, 0.999))
 criterion = nn.MSELoss()
 
 # 動態調整 batch_size
