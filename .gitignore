@@ -1,1 +1,2 @@
-RUN/train/cnn_lstm_model.pth
+*.pth
+*.pt
