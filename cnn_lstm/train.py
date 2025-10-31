@@ -63,20 +63,20 @@ plt.tight_layout()
 plt.savefig(Path('RUN/train/target_plots.png'))
 plt.close()
 
-# 2. 數據標準化
-from sklearn.preprocessing import MinMaxScaler
+# 2. 數據標準化 - 使用 RobustScaler 更好處理大範圍變化
+from sklearn.preprocessing import RobustScaler
 import joblib
-# 創建 MinMaxScaler 對象
-feature_scaler = MinMaxScaler()
-target_scaler = MinMaxScaler()
-# 將數據標準化到 [0, 1] 範圍內
+# RobustScaler 基於中位數和四分位數,對離群值更穩健
+feature_scaler = RobustScaler()
+target_scaler = RobustScaler()
+# 標準化
 scaled_features = feature_scaler.fit_transform(features)
 scaled_targets = target_scaler.fit_transform(targets)
 
 # 保存 scaler 以便預測時使用
 joblib.dump(feature_scaler, Path('RUN/train/feature_scaler.pkl'))
 joblib.dump(target_scaler, Path('RUN/train/target_scaler.pkl'))
-print("已保存 feature_scaler 和 target_scaler")
+print("已保存 feature_scaler 和 target_scaler (使用 RobustScaler)")
 
 # 3. 數據切分為序列 (改進版: 添加動態特徵)
 def split_data(features, targets, time_step=12):
@@ -106,6 +106,31 @@ dataX, datay = split_data(scaled_features, scaled_targets, time_step=12)
 
 print(f"dataX.shape:{dataX.shape}, datay.shape:{datay.shape}")  # 特徵維度應該是 63*3=189
 
+# 數據增強函數
+def augment_data(X, y, noise_level=0.02, scale_range=(0.95, 1.05)):
+    """
+    數據增強：添加輕微擾動和縮放
+    """
+    augmented_X = []
+    augmented_y = []
+    
+    for i in range(len(X)):
+        # 原始數據
+        augmented_X.append(X[i])
+        augmented_y.append(y[i])
+        
+        # 增強1: 添加高斯噪音
+        noise = np.random.normal(0, noise_level, X[i].shape)
+        augmented_X.append(X[i] + noise)
+        augmented_y.append(y[i])
+        
+        # 增強2: 輕微縮放
+        scale = np.random.uniform(scale_range[0], scale_range[1])
+        augmented_X.append(X[i] * scale)
+        augmented_y.append(y[i])
+    
+    return np.array(augmented_X), np.array(augmented_y)
+
 # 4. 劃分訓練集和測試集
 def train_test_split(dataX, datay, shuffle=True, percentage=0.8):
     if shuffle:
@@ -122,7 +147,12 @@ def train_test_split(dataX, datay, shuffle=True, percentage=0.8):
 
 #前80%作訓練，後80%作測試
 train_X, train_y, test_X, test_y = train_test_split(dataX, datay, shuffle=False, percentage=0.8)
-print(f"train_X.shape:{train_X.shape}, test_X.shape:{test_X.shape}")
+
+# 對訓練集進行數據增強
+print(f"原始訓練集: train_X.shape:{train_X.shape}")
+train_X, train_y = augment_data(train_X, train_y, noise_level=0.015, scale_range=(0.97, 1.03))
+print(f"增強後訓練集: train_X.shape:{train_X.shape}")
+print(f"test_X.shape:{test_X.shape}")
 
 X_train, y_train = train_X, train_y
 
@@ -208,46 +238,55 @@ test_y1 = torch.Tensor(test_y).to(device)
 # 定義輸入、隱藏狀態和輸出維度
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 512  # 進一步增加容量
-num_layers = 3  # 增加層數
+hidden_size = 640  # 大幅增加容量
+num_layers = 4  # 增加到4層
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.15  # 進一步降低 Dropout
+dropout = 0.1  # 降低到0.1，更激進
 
 # 設定全連接層的神經元數量（更深更寬）
-fc_neurons = [768, 512, 256, 128, output_size]  # 5層，從768開始
+fc_neurons = [1024, 768, 512, 256, 128, output_size]  # 6層，從1024開始
 
 # 創建 CNN_LSTM 模型 (現在是 BiLSTM + Dropout)
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
                 fc_neurons=fc_neurons, dropout=dropout).to(device)
 
 # 訓練參數
-epochs = 3000  # 進一步增加訓練輪數
-batch_size = 256  # 保持較大批量
-optimizer = optim.AdamW(model.parameters(), lr=0.002, weight_decay=0.01)  # 使用 AdamW + 權重衰減
+epochs = 3000
+batch_size = 256
+optimizer = optim.AdamW(model.parameters(), lr=0.003, weight_decay=0.005)  # 更高學習率，更低權重衰減
 
 # 添加學習率調度器 - 餘弦退火
-scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=50, T_mult=2, eta_min=1e-6)
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=30, T_mult=2, eta_min=1e-5)
 
-# 改進損失函數: Huber Loss (更穩健) + 動態誤差懲罰
-criterion = nn.HuberLoss(delta=1.0)  # Huber Loss 對大誤差更寬容
-lambda_velocity = 0.2  # 進一步降低，更關注位置準確性
+# 更激進的損失函數
+criterion = nn.MSELoss()  # 改回 MSE，對大誤差更敏感
+lambda_velocity = 0.1  # 降低速度權重
+lambda_magnitude = 1.5  # 新增：鼓勵大幅度預測
 
 def combined_loss(pred, target, prev_pred=None, prev_target=None):
     """
     組合損失函數:
-    1. Smooth L1 Loss (位置誤差)
+    1. MSE Loss (位置誤差) - 對大誤差更敏感
     2. 速度一致性損失 (角速度誤差)
+    3. 幅度損失 (鼓勵預測大值)
     """
+    # 基礎位置誤差
     pos_loss = criterion(pred, target)
     
+    # 速度一致性
+    vel_loss = 0
     if prev_pred is not None and prev_target is not None:
-        # 計算預測和真實的角速度
         pred_velocity = pred - prev_pred
         target_velocity = target - prev_target
-        velocity_loss = criterion(pred_velocity, target_velocity)
-        return pos_loss + lambda_velocity * velocity_loss
+        vel_loss = criterion(pred_velocity, target_velocity)
     
-    return pos_loss
+    # 幅度懲罰 - 如果預測幅度小於真實幅度，額外懲罰
+    pred_range = torch.abs(pred).mean()
+    target_range = torch.abs(target).mean()
+    magnitude_penalty = torch.relu(target_range - pred_range) * lambda_magnitude
+    
+    total_loss = pos_loss + lambda_velocity * vel_loss + magnitude_penalty
+    return total_loss
 
 # 動態調整 batch_size
 batch_size = min(batch_size, len(train_X))
@@ -419,8 +458,8 @@ plt.figure(figsize=(12, 8))
 for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.subplot(3, 1, i+1)
     x = [j for j in range(len(true_y))]
-    plt.plot(x, pred_y[:, i], marker="o", markersize=1, label=f"pred_{label}")
     plt.plot(x, true_y[:, i], marker="x", markersize=1, label=f"true_{label}")
+    plt.plot(x, pred_y[:, i], marker="o", markersize=1, label=f"pred_{label}")
     plt.title(f"CNN_LSTM - {label}")
     plt.xlabel("Sample")
     plt.ylabel(label)

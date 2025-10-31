@@ -93,11 +93,11 @@ print(f"載入模型: {model_path}")
 # 3. 載入模型
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 512  # 與訓練時一致
-num_layers = 3  # 與訓練時一致
+hidden_size = 640  # 與訓練時一致
+num_layers = 4  # 與訓練時一致
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.15  # 與訓練時一致
-fc_neurons = [768, 512, 256, 128, output_size]  # 與訓練時一致
+dropout = 0.1  # 與訓練時一致
+fc_neurons = [1024, 768, 512, 256, 128, output_size]  # 與訓練時一致
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
@@ -116,15 +116,15 @@ for i in range(21):
 
 features = df[feature_columns].values
 
-# 5. 標準化（需與訓練時一致 - 載入訓練時保存的 scaler）
+# 5. 標準化（需與訓練時一致 - 載入訓練時保存的 RobustScaler）
 import joblib
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import RobustScaler
 
-# 載入訓練時保存的 scaler
+# 載入訓練時保存的 scaler (現在是 RobustScaler)
 scaler_dir = Path('RUN/train')
 feature_scaler = joblib.load(scaler_dir / 'feature_scaler.pkl')
 target_scaler = joblib.load(scaler_dir / 'target_scaler.pkl')
-print("已載入訓練時的 feature_scaler 和 target_scaler")
+print("已載入訓練時的 feature_scaler 和 target_scaler (RobustScaler)")
 
 # 使用訓練時的 scaler 進行標準化（只 transform，不 fit）
 features = feature_scaler.transform(features)
@@ -175,8 +175,8 @@ plt.figure(figsize=(12, 8))
 for i, label in enumerate(['Yaw', 'Pitch', 'Roll']):
     plt.subplot(3, 1, i+1)
     x = [j for j in range(len(true_inv))]
-    plt.plot(x, pred_inv[:, i], marker="o", markersize=1, label=f"pred_{label}")
     plt.plot(x, true_inv[:, i], marker="x", markersize=1, label=f"true_{label}")
+    plt.plot(x, pred_inv[:, i], marker="o", markersize=1, label=f"pred_{label}")
     plt.title(f"CNN_LSTM - {label}")
     plt.xlabel("Sample")
     plt.ylabel(label)
