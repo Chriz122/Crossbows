@@ -55,11 +55,11 @@ print(f"載入模型: {model_path}")
 # 3. 載入模型
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 256  # 降低隱藏狀態維度
-num_layers = 2  # 減少層數
+hidden_size = 384  # 與訓練時一致
+num_layers = 3  # 與訓練時一致
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.3  # Dropout 比率
-fc_neurons = [256, 128, 64, output_size]  # 逐層遞減
+dropout = 0.2  # 與訓練時一致
+fc_neurons = [512, 256, 128, 64, output_size]  # 與訓練時一致
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
@@ -78,13 +78,20 @@ for i in range(21):
 
 features = df[feature_columns].values
 
-# 5. 標準化（需與訓練時一致）
+# 5. 標準化（需與訓練時一致 - 載入訓練時保存的 scaler）
+import joblib
 from sklearn.preprocessing import MinMaxScaler
-feature_scaler = MinMaxScaler()
-target_scaler = MinMaxScaler()
-features = feature_scaler.fit_transform(features)
+
+# 載入訓練時保存的 scaler
+scaler_dir = Path('RUN/train')
+feature_scaler = joblib.load(scaler_dir / 'feature_scaler.pkl')
+target_scaler = joblib.load(scaler_dir / 'target_scaler.pkl')
+print("已載入訓練時的 feature_scaler 和 target_scaler")
+
+# 使用訓練時的 scaler 進行標準化（只 transform，不 fit）
+features = feature_scaler.transform(features)
 targets = df[['Yaw', 'Pitch', 'Roll']].values
-scaled_targets = target_scaler.fit_transform(targets)
+scaled_targets = target_scaler.transform(targets)
 
 # 6. 切分序列（time_step=12）並添加動態特徵
 time_step = 12
@@ -117,12 +124,13 @@ with torch.no_grad():
 pred_inv = target_scaler.inverse_transform(pred)
 true_inv = target_scaler.inverse_transform(datay)
 
-# 將預測值平移第一個預測值的量
-shift_amount = pred_inv[0]
-pred_inv = pred_inv - shift_amount
+# ❌ 移除錯誤的平移操作
+# shift_amount = pred_inv[0]
+# pred_inv = pred_inv - shift_amount
 
 print("預測結果 shape:", pred.shape)
-print(pred_inv)
+print("前10個預測值:")
+print(pred_inv[:10])
 
 # 儲存預測與真實值的摺線圖
 plt.figure(figsize=(12, 8))

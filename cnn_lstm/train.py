@@ -65,12 +65,18 @@ plt.close()
 
 # 2. 數據標準化
 from sklearn.preprocessing import MinMaxScaler
+import joblib
 # 創建 MinMaxScaler 對象
 feature_scaler = MinMaxScaler()
 target_scaler = MinMaxScaler()
 # 將數據標準化到 [0, 1] 範圍內
 scaled_features = feature_scaler.fit_transform(features)
 scaled_targets = target_scaler.fit_transform(targets)
+
+# 保存 scaler 以便預測時使用
+joblib.dump(feature_scaler, Path('RUN/train/feature_scaler.pkl'))
+joblib.dump(target_scaler, Path('RUN/train/target_scaler.pkl'))
+print("已保存 feature_scaler 和 target_scaler")
 
 # 3. 數據切分為序列 (改進版: 添加動態特徵)
 def split_data(features, targets, time_step=12):
@@ -164,26 +170,29 @@ test_y1 = torch.Tensor(test_y).to(device)
 # 定義輸入、隱藏狀態和輸出維度
 input_size = 189  # 輸入特徵維度（原始63 + 速度63 + 加速度63 = 189）
 conv_input = 12  # 與 time_step 一致
-hidden_size = 256  # 降低隱藏狀態維度
-num_layers = 2  # 減少層數
+hidden_size = 384  # 增加隱藏狀態維度以提升表達能力
+num_layers = 3  # 增加層數
 output_size = 3  # 輸出維度（預測 Yaw, Pitch, Roll）
-dropout = 0.3  # Dropout 比率
+dropout = 0.2  # 降低 Dropout 以保留更多信息
 
-# 設定全連接層的神經元數量
-fc_neurons = [256, 128, 64, output_size]  # 逐層遞減
+# 設定全連接層的神經元數量（更深的網絡）
+fc_neurons = [512, 256, 128, 64, output_size]  # 5層全連接
 
 # 創建 CNN_LSTM 模型 (現在是 BiLSTM + Dropout)
 model = CNN_LSTM(conv_input, input_size, hidden_size, num_layers, output_size, 
                 fc_neurons=fc_neurons, dropout=dropout).to(device)
 
 # 訓練參數
-epochs = 1000
-batch_size = 128  # 減少批量大小以降低記憶體需求
-optimizer = optim.Adam(model.parameters(), lr=0.0001, betas=(0.9, 0.999))  # 調整學習率和 beta
+epochs = 2000  # 增加訓練輪數
+batch_size = 256  # 增加批量大小以加速訓練
+optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.9, 0.999))  # 提高學習率
+
+# 添加學習率調度器
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=20, verbose=True)
 
 # 改進損失函數: Smooth L1 Loss + 動態誤差懲罰
 criterion = nn.SmoothL1Loss()  # 更穩健的損失函數
-lambda_velocity = 0.5  # 動態誤差權重
+lambda_velocity = 0.3  # 降低動態誤差權重，讓模型更關注位置準確性
 
 def combined_loss(pred, target, prev_pred=None, prev_target=None):
     """
@@ -211,7 +220,7 @@ test_losses = []
 
 # Early Stopping 參數
 best_test_loss = float('inf')
-patience = 50  # 50個 epoch 沒改善就停止
+patience = 100  # 增加耐心值到100
 patience_counter = 0
 best_model_state = None
 
@@ -285,7 +294,11 @@ for epoch in range(epochs):
 
         train_losses.append(train_loss.item())
         test_losses.append(test_loss.item())
-        print(f"epoch:{epoch}, train_loss:{train_loss.item():.6f}, test_loss:{test_loss.item():.6f}")
+        
+        # 學習率調度
+        scheduler.step(test_loss)
+        
+        print(f"epoch:{epoch}, train_loss:{train_loss.item():.6f}, test_loss:{test_loss.item():.6f}, lr:{optimizer.param_groups[0]['lr']:.6f}")
         print(f"epoch:{epoch}, train_ap:{train_ap}, test_ap:{test_ap}")
         
         # Early Stopping 檢查
